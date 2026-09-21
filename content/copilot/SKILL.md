@@ -68,7 +68,7 @@ one fetch owner; more workers must not multiply throttled requests.
 
 Roles are private prompts, not registered agents; pass task, paths, criteria, write scope, context, output contract, budget and permissions.
 
-Dispatch each role with its `models` list, in order. If policy-disabled or rejected, try the next entry, then the cheapest suitable host model, and report the substitution; an explicit user model choice overrides the list.
+Apply [task-fit model routing](references/hydra-modes.md#task-fit-model-routing) before each dispatch, not a fixed role/model order. Pass the chosen model explicitly when supported; report its task-specific reason and any substitution.
 Role tiers are hints, not capability caps.
 Keep unresolved high-risk logic in the main agent, and delegate hard units only to an explicitly chosen capable model, not a cheap default.
 Never change `/model` or session settings. If model selection is unavailable, say so and work directly.

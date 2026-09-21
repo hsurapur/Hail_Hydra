@@ -169,12 +169,21 @@ Then, **inside the same Copilot session**:
 
 `/hail-hydra` is an explicit skill invocation, not a sticky mode — a later message such as `Explain this function` uses the normal agent. The skill sets `disable-model-invocation: false` because some Copilot versions return `Skill not found` for explicit requests otherwise ([copilot-cli#4438](https://github.com/github/copilot-cli/issues/4438)); accidental model-mediated loading must not trigger Hydra work.
 
-**Model defaults** — each role dispatches through its tier's `models` list, in order; an admin-disabled or rejected entry falls through to the next. Your selected main model keeps substantive reasoning and final acceptance, and naming a model in the request overrides the default. Under `Auto`, workers may inherit the session model.
+**Task-fit worker models** — no role-wide first-choice model. Catalogue entries
+retain `cheap`/`mid` hints with `modelSelection: task-fit`; the main agent chooses
+an actual host-available model for each unit's complexity, risk, context, tools
+and mode. User model pins/exclusions take precedence. Turbo favors capability
+and speed, Balanced weighs cost as well, and Economy uses inexpensive workers
+only for suitable work. Your selected main model keeps difficult decisions and
+final acceptance; its selection does not force every worker to use that model.
 
-| Tier | Roles | models[0] | fallback | $/1M in/out |
-|---|---|---|---|---|
-| cheap | git, guard, preflight, runner, scout, scribe, sentinel-scan | `gpt-5.6-luna` | `claude-haiku-4.5` | 0.20/1.20 · 1.00/5.00 |
-| mid | analyst, coder, sentinel, architect, researcher | `claude-sonnet-5` | `gpt-5.6-terra` | 2.00/10.00 · 2.00/12.00 |
+The skill instructs the agent to pass the chosen worker model explicitly and
+record a short task-specific reason. The same model may fit several units;
+artificial model rotation is not the goal. Requested and observed models are
+reported separately when the host exposes them. This is instruction-guided
+selection, not a live pricing/discovery engine or a guaranteed model mix.
+If no suitable available worker can be identified, the main agent handles
+the unit directly and discloses the limitation. No global model settings change.
 
 **Modes:** `/hail-hydra --mode <turbo|balanced|economy> <goal>` (default `balanced`); Turbo puts speed first and costs more. Ceilings are instruction-level heuristics bounded by your Copilot plan's concurrency, not a scheduler guarantee.
 

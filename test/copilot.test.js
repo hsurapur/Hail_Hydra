@@ -134,8 +134,17 @@ for (const flag of ['help', 'status', 'stats', 'compare', 'context', 'memory', '
   assert.ok(commands.includes(`/hail-hydra --${flag}`), `${flag}: command documented`);
 }
 assert.match(commands, /checks version and owned files/);
-assert.match(skill, /its `models` list/);
-assert.match(skill, /report the substitution/);
+assert.match(skill, /references\/hydra-modes\.md#task-fit-model-routing/);
+assert.match(skill, /before each dispatch, not a fixed role\/model order/);
+assert.match(skill, /Pass the chosen model explicitly when supported/);
+assert.match(skill, /report.*substitution/);
+assert.match(modes, /complexity, uncertainty, risk, required context/);
+assert.match(modes, /Respect user pins, exclusions and budgets/);
+assert.match(modes, /Record\s+the unit, requested model and brief selection reason/);
+assert.match(modes, /requested is not proof of used/);
+assert.match(modes, /Never silently ignore a user pin/);
+assert.match(modes, /Do not rotate models\s+just for variety/);
+assert.match(quality, /task-fit routing/);
 assert.ok(Buffer.byteLength(skill, 'utf8') < 6000, 'bounded on-demand context');
 assert.deepStrictEqual(fs.readdirSync(host.distDir), ['skills'], 'no automatic host payload');
 
@@ -154,9 +163,10 @@ const payloadCount = roles.length + 11;
 for (const role of roles) {
   const tierEntry = Object.values(MODEL_MAP).find((model) => model.tier === role.tier);
   assert.ok(tierEntry, `${role.name}: known tier`);
-  assert.deepStrictEqual(role.models, tierEntry.models, `${role.name}: default models match tier catalogue`);
+  assert.strictEqual(role.modelSelection, 'task-fit', `${role.name}: task requirements select the worker`);
+  assert.strictEqual(role.modelSelection, tierEntry.modelSelection);
+  assert.ok(!Object.prototype.hasOwnProperty.call(role, 'models'), 'no role-wide first-model order');
   assert.ok(!Object.prototype.hasOwnProperty.call(role, 'preferredModel'), 'no stale model pin');
-  assert.ok(!Object.prototype.hasOwnProperty.call(role, 'modelSelection'), 'modelSelection removed');
   assert.strictEqual(role.tierIsHint, true, 'role tier must not cap worker capability');
   assert.strictEqual(role.instructions, `references/${role.name}.md`);
   const body = fs.readFileSync(path.join(source, role.instructions), 'utf8');
@@ -289,6 +299,13 @@ try {
   const manifest = JSON.parse(manifestText);
   assert.deepStrictEqual(installedPayload, snapshot(source), 'installed payload matches generated roles');
   assert.deepStrictEqual(manifest.files, Object.keys(installedPayload).sort(), 'all payload files are owned');
+  const fixedModelRoles = roles.map((role) => {
+    const { modelSelection, ...previous } = role;
+    return { ...previous, models: ['fixed-worker-model'] };
+  });
+  fs.writeFileSync(path.join(installedSkill, 'references', 'roles.json'), JSON.stringify(fixedModelRoles));
+  install(cfg);
+  assert.deepStrictEqual(snapshot(cfg), initial, 'upgrade removes stale first-choice model lists from every role');
   const utilities = ['references/hydra-commands.md', 'references/hydra-measurements.md', 'references/hydra-quality.md',
     'references/hydra-modes.md', 'references/hydra-continuity.md', 'references/hydra-services.md',
     'scripts/hydra-control.js', 'scripts/hydra-usage.js'];
@@ -407,7 +424,7 @@ try {
   assert.match(output, /\/skills reload/);
   assert.match(output, /\/hail-hydra <task>/);
   assert.match(output, /Task modes: --mode turbo, balanced \(default\), or economy/);
-  assert.match(output, /cheap model per tier/);
+  assert.match(output, /Worker models are selected per task requirements and mode/);
   assert.match(output, /Copilot hooks are deferred until upstream hook reliability bugs are fixed/);
   assert.ok(!/Hooks registered|Sentinel pipeline active|StatusLine configured/.test(output),
     'instruction-gated completion does not claim automatic hooks');

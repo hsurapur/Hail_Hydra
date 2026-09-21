@@ -49,6 +49,38 @@ Record the mode, requested ceilings and main/worker responsibilities in the
 task ledger before substantive dispatch. Count every advisor, scan, retry
 and escalation; do not reset counters when replanning.
 
+## Task-fit model routing
+
+Choose the worker model for the actual unit of work, not its role name or
+the previous dispatch. The catalogue's `modelSelection: task-fit` and tier
+hints are instructions, not a model-discovery service or automatic router.
+
+1. Identify the unit's complexity, uncertainty, risk, required context,
+   modalities, tools and output constraints before selecting a model.
+2. Use the current host's exposed, policy-allowed models and verified
+   capability/cost information. Respect user pins, exclusions and budgets.
+   Do not invent availability, rankings, price equivalence or reasoning depth
+   from names. If no suitable worker can be justified, handle the unit in the
+   selected main agent and disclose the limitation.
+3. Fit the mode: Turbo favors capable workers and useful parallel speed;
+   Balanced trades capability, latency and cost; Economy chooses inexpensive
+   workers only when they meet the unit's requirements. High-risk decisions
+   and final acceptance stay with the main agent in every mode.
+4. Pass the selected model ID explicitly when the native dispatch tool
+   supports it; omitting the field can inherit a fixed host default. Record
+   the unit, requested model and brief selection reason in the task ledger.
+   Report actual models only when exposed; requested is not proof of used.
+5. Reassess when scope or evidence changes. If a model is rejected, report
+   the substitution and reselect for the same requirements within budget.
+   Never silently ignore a user pin or replace a complex unit with an
+   incapable cheaper worker; work directly or explain the blocker instead.
+
+The same model may legitimately fit multiple units. Do not rotate models
+just for variety, or probe paid models solely to compare names. Reuse valid
+host capability information without duplicating discovery for every worker.
+This policy never changes `/model`, global `/subagents` settings or workers
+that are already running; it does not guarantee a mixed-model roster.
+
 ## Turbo
 
 Keep substantive reasoning and final acceptance with the selected main

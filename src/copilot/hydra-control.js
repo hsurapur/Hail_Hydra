@@ -44,7 +44,7 @@ const MODE_POLICIES = Object.freeze({
   }),
   balanced: Object.freeze({
     limits: Object.freeze({ maxConcurrentAgents: 2, maxTotalDispatches: 6, maxImprovementRounds: 2 }),
-    workerPolicy: 'catalogue-default-models-with-tier-hints',
+    workerPolicy: 'task-fit-with-tier-hints',
     researchPolicy: 'targeted-evidence-for-material-uncertainty',
     reviewPolicy: 'risk-based-review-and-bounded-improvement',
     contextPolicy: 'focused-briefs-and-checkpoints',

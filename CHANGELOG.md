@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Task-fit Copilot worker routing** replaces fixed first-choice model lists.
+  Select per-unit requirements, risk, mode and host availability; respect user
+  pins/exclusions, pass explicit worker models and disclose selection reasons.
+  Role tiers remain cost hints, not capability caps or a forced model mix.
+
 ### Added
 - **Service-aware Copilot coordination**: automatic ready-task decomposition,
   one fetch owner per shared quota, deduplicated/batched reads, progress and

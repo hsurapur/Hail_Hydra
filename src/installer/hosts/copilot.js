@@ -175,7 +175,7 @@ module.exports = {
       'Run /skills reload in the current Copilot session, then /skills info hail-hydra.',
       'Use /hail-hydra <task> for this request only; unprefixed messages use the normal agent.',
       'Task modes: --mode turbo, balanced (default), or economy; your main model stays selected.',
-      'Worker roles default to a cheap model per tier (see roles.json); your main model keeps reasoning.',
+      'Worker models are selected per task requirements and mode; your main model keeps reasoning.',
       'Copilot hooks are deferred until upstream hook reliability bugs are fixed; quality gates and ' +
         '--notify run in-task/manually for now.',
     ];

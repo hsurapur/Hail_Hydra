@@ -9,6 +9,8 @@ for design decisions. Trivial change: check the diff directly.
 
 If independent review is unavailable, the main agent reviews and says so —
 self-review is never called independent.
+Choose review models by actual scope and risk under [task-fit routing](hydra-modes.md#task-fit-model-routing),
+not the role's typical cost tier. A cheap pattern scan is not a deep logic review.
 
 Do not declare the task complete or deploy while a required check fails,
 required behavior is unverified, or a confirmed serious finding remains.
