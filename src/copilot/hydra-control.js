@@ -14,6 +14,7 @@ const UTILITY_GUIDE_FILES = [
   'references/hydra-measurements.md',
   'references/hydra-modes.md',
   'references/hydra-quality.md',
+  'references/hydra-services.md',
 ];
 const REQUIRED_MANIFEST_FILES = [
   'SKILL.md',
@@ -111,6 +112,20 @@ function fail(message) {
   throw new HydraControlError(message);
 }
 
+function getServicePolicy() {
+  return {
+    maxConcurrentRequests: 1,
+    maxAttemptsPerRequest: 3,
+    maxRequestsPerBranch: 12,
+    elapsedBudgetSeconds: 300,
+    slowBranchWarningSeconds: 60,
+    baseRetrySeconds: 5,
+    maxBackoffSeconds: 60,
+    jitterSeconds: 2,
+    enforcement: 'advisory-no-transport-control',
+  };
+}
+
 function resolveMode(name = 'balanced', options = {}) {
   if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(MODE_POLICIES, name)) {
     fail('Invalid mode. Expected turbo, balanced, or economy.');
@@ -142,6 +157,7 @@ function resolveMode(name = 'balanced', options = {}) {
     taskLocal: true,
     expanded,
     limits,
+    servicePolicy: getServicePolicy(),
     overridesApplied,
     mainModel: 'preserve-selection',
     qualityFloor: 'required-checks-and-serious-findings-block',
@@ -152,6 +168,95 @@ function resolveMode(name = 'balanced', options = {}) {
     reviewPolicy: policy.reviewPolicy,
     contextPolicy: policy.contextPolicy,
   };
+}
+
+function isValidServiceSeconds(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function validateServiceState(state) {
+  const required = ['status', 'operation', 'attempts', 'requests', 'elapsedSeconds'];
+  const allowed = new Set([...required, 'retryAfterSeconds']);
+  if (!isPlainObject(state) || Reflect.ownKeys(state).some((key) => !allowed.has(key))) {
+    fail('Invalid service plan state.');
+  }
+  if (required.some((key) => !Object.prototype.hasOwnProperty.call(state, key))) {
+    fail('Invalid service plan state.');
+  }
+  if (
+    !['pending', 'throttled', 'transient', 'permanent'].includes(state.status)
+    || !['read', 'write'].includes(state.operation)
+    || !Number.isSafeInteger(state.attempts) || state.attempts < 1
+    || !Number.isSafeInteger(state.requests) || state.requests < state.attempts
+    || !isValidServiceSeconds(state.elapsedSeconds)
+    || (Object.prototype.hasOwnProperty.call(state, 'retryAfterSeconds')
+      && state.retryAfterSeconds !== null && !isValidServiceSeconds(state.retryAfterSeconds))
+  ) {
+    fail('Invalid service plan state.');
+  }
+}
+
+function servicePlanResult(action, reason, mayRetry, retryDelayRangeSeconds, remainingSeconds, policy) {
+  return {
+    command: 'service-plan',
+    action,
+    reason,
+    mayRetry,
+    retryDelayRangeSeconds,
+    remainingSeconds,
+    transportControlled: false,
+    policy,
+  };
+}
+
+function planServiceStep(state) {
+  validateServiceState(state);
+  const policy = getServicePolicy();
+  const remainingSeconds = Math.max(0, policy.elapsedBudgetSeconds - state.elapsedSeconds);
+
+  if (state.status === 'pending') {
+    if (state.elapsedSeconds >= policy.elapsedBudgetSeconds) {
+      return servicePlanResult('blocked_in_flight', 'deadline_exhausted', false, null, remainingSeconds, policy);
+    }
+    if (state.elapsedSeconds >= policy.slowBranchWarningSeconds) {
+      return servicePlanResult('report_slow', 'slow_branch_in_flight', false, null, remainingSeconds, policy);
+    }
+    return servicePlanResult('wait', 'request_pending', false, null, remainingSeconds, policy);
+  }
+
+  if (state.status === 'permanent') {
+    return servicePlanResult('stop', 'permanent_failure', false, null, remainingSeconds, policy);
+  }
+  if (state.operation === 'write') {
+    return servicePlanResult('stop', 'manual_reconcile_required', false, null, remainingSeconds, policy);
+  }
+  if (state.attempts >= policy.maxAttemptsPerRequest) {
+    return servicePlanResult('stop', 'max_attempts_exhausted', false, null, remainingSeconds, policy);
+  }
+  if (state.requests >= policy.maxRequestsPerBranch) {
+    return servicePlanResult('stop', 'request_budget_exhausted', false, null, remainingSeconds, policy);
+  }
+  if (state.elapsedSeconds >= policy.elapsedBudgetSeconds) {
+    return servicePlanResult('stop', 'deadline_exhausted', false, null, remainingSeconds, policy);
+  }
+
+  const exponentialDelay = Math.min(
+    policy.maxBackoffSeconds,
+    policy.baseRetrySeconds * Math.pow(2, state.attempts - 1),
+  );
+  const delayMin = Math.max(exponentialDelay, state.retryAfterSeconds || 0);
+  const delayMax = Math.min(Number.MAX_VALUE, delayMin + policy.jitterSeconds);
+  if (delayMax >= remainingSeconds) {
+    return servicePlanResult('stop', 'deadline_before_retry', false, null, remainingSeconds, policy);
+  }
+  return servicePlanResult(
+    'retry_after',
+    state.status === 'throttled' ? 'throttled_read' : 'transient_read',
+    true,
+    { min: delayMin, max: delayMax },
+    remainingSeconds,
+    policy,
+  );
 }
 
 function splitRelativePath(relativePath) {
@@ -688,7 +793,7 @@ function getHelp() {
   return {
     command: 'help',
     explicitRequestOnly: true,
-    supportedHelperCommands: ['help', 'status', 'mode', 'map', 'check-update', 'report', 'notify'],
+    supportedHelperCommands: ['help', 'status', 'mode', 'map', 'check-update', 'report', 'notify', 'service-policy', 'service-plan'],
     flags: HELP_FLAGS,
     notes: [
       'These are explicit /hail-hydra management routes, not native /hydra:* slash commands.',
@@ -698,6 +803,7 @@ function getHelp() {
       'Host and user hard limits still apply, including all required quality, security, correctness, and permission checks; serious findings block completion.',
       'Ceiling overrides require an explicit user request and do not guarantee host capacity; beyond documented balanced expansion, complexity alone does not raise ceilings or promote modes.',
       'Mode policies do not schedule agents, cap billing, change the selected main model, or write memory; context remains bounded.',
+      'Service coordination is advisory only: it cannot time out or cancel an already-pending MCP request.',
     ],
   };
 }
@@ -765,12 +871,46 @@ function parseModeArgs(args) {
   return { command: 'mode', mode, options };
 }
 
+function parseServiceSeconds(raw) {
+  if (typeof raw !== 'string' || raw.trim() !== raw || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(raw)) {
+    fail('Service plan values must be nonnegative decimal numbers.');
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) fail('Service plan values must be nonnegative decimal numbers.');
+  return value;
+}
+
+function parseServiceCount(raw) {
+  if (typeof raw !== 'string' || raw.trim() !== raw || !/^[1-9][0-9]*$/.test(raw)) {
+    fail('Service plan counts must be positive safe integers in decimal form.');
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) fail('Service plan counts must be positive safe integers in decimal form.');
+  return value;
+}
+
+function parseServicePlanArgs(args) {
+  if (args.length !== 5 && args.length !== 6) {
+    fail('service-plan requires status, operation, attempts, requests, elapsed seconds, and optional retry-after seconds.');
+  }
+  const state = {
+    status: args[0],
+    operation: args[1],
+    attempts: parseServiceCount(args[2]),
+    requests: parseServiceCount(args[3]),
+    elapsedSeconds: parseServiceSeconds(args[4]),
+  };
+  if (args.length === 6) state.retryAfterSeconds = parseServiceSeconds(args[5]);
+  validateServiceState(state);
+  return { command: 'service-plan', state };
+}
+
 function parseArgs(argv) {
   const args = Array.isArray(argv) ? argv.slice() : [];
   if (!args.length) return { command: 'help' };
   const [command, ...rest] = args;
   if (INSTRUCTION_ONLY_FLAGS.has(command)) {
-    fail('This helper only supports help, status, mode, map, check-update, report, and notify.');
+    fail('This helper only supports help, status, mode, map, check-update, report, notify, service-policy, and service-plan.');
   }
   switch (command) {
     case 'help':
@@ -803,6 +943,11 @@ function parseArgs(argv) {
     case '--notify':
       if (rest.length !== 1) fail('notify requires exactly one argument: success or failure.');
       return { command: 'notify', goal: rest[0] };
+    case 'service-policy':
+      if (rest.length) fail('service-policy does not take arguments.');
+      return { command: 'service-policy' };
+    case 'service-plan':
+      return parseServicePlanArgs(rest);
     default:
       fail('Unknown command. Use help.');
   }
@@ -841,6 +986,12 @@ async function main(argv, io, deps) {
       case 'notify':
         result = buildNotification(parsed.goal);
         break;
+      case 'service-policy':
+        result = { command: 'service-policy', ...getServicePolicy() };
+        break;
+      case 'service-plan':
+        result = planServiceStep(parsed.state);
+        break;
       default:
         fail('Unknown command. Use help.');
     }
@@ -865,7 +1016,9 @@ module.exports = {
   HydraControlError,
   parseArgs,
   getHelp,
+  getServicePolicy,
   resolveMode,
+  planServiceStep,
   parseSemver,
   inspectStatus,
   readMapFile,

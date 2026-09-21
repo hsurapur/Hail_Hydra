@@ -21,6 +21,7 @@ const measurements = fs.readFileSync(path.join(source, 'references', 'hydra-meas
 const quality = fs.readFileSync(path.join(source, 'references', 'hydra-quality.md'), 'utf8');
 const modes = fs.readFileSync(path.join(source, 'references', 'hydra-modes.md'), 'utf8');
 const continuity = fs.readFileSync(path.join(source, 'references', 'hydra-continuity.md'), 'utf8');
+const services = fs.readFileSync(path.join(source, 'references', 'hydra-services.md'), 'utf8');
 assert.match(skill, /^name: hail-hydra$/m);
 assert.match(skill, /^argument-hint: "\[--mode turbo\|balanced\|economy\] \[--help\] <task>"$/m);
 assert.match(skill, /^disable-model-invocation: false$/m);
@@ -44,6 +45,19 @@ assert.match(modes, /multiple substantial, independent subsystems/);
 assert.match(skill, /Respect smaller host\/user limits/);
 assert.match(skill, /do not\s+require agent names, a swarm flag or repeated "continue" prompts/);
 assert.match(skill, /task ledger with dependencies, file ownership/);
+assert.match(skill, /Automatically split substantial goals into ready units/);
+assert.match(skill, /references\/hydra-services\.md/);
+assert.match(skill, /more workers must not multiply throttled requests/);
+assert.match(modes, /servicePolicy.*applies unchanged across all modes/);
+assert.match(commands, /\(hydra-services\.md\)/);
+assert.match(services, /one fetch owner per shared provider\/account\/tenant quota scope/);
+assert.match(services, /Never duplicate a pending call/);
+assert.match(services, /Honor server `Retry-After` as a minimum/);
+assert.match(services, /pause\s+the whole quota group/);
+assert.match(services, /does not sleep, send a request, hold a lock or intercept MCP traffic/);
+assert.match(services, /cannot fix that\s+transport limitation or promise a five-minute return/);
+assert.match(services, /partial results are never described as complete/);
+assert.match(continuity, /never reset them on resume/);
 assert.match(skill, /subagents have separate contexts/i);
 assert.match(skill, /hydra-researcher/);
 assert.match(skill, /balancing mode priorities: cost, elapsed time and context/);
@@ -136,7 +150,7 @@ for (const otherHost of ['claude', 'gemini', 'codex']) {
     .map((file) => path.parse(file).name).sort(), canonical.map((file) => path.parse(file).name).sort(),
   `${otherHost}: canonical role catalogue unchanged`);
 }
-const payloadCount = roles.length + 10;
+const payloadCount = roles.length + 11;
 for (const role of roles) {
   const tierEntry = Object.values(MODEL_MAP).find((model) => model.tier === role.tier);
   assert.ok(tierEntry, `${role.name}: known tier`);
@@ -149,6 +163,7 @@ for (const role of roles) {
   assert.ok(!/\.claude|Claude Code|\{\{HYDRA_|^## (Your Memory|Cleanup|Collaboration)$/m.test(body),
     `${role.name}: no unported host hooks, memory or paths`);
   assert.match(body, /Do not delegate again/);
+  assert.match(body, /Only the assigned fetch owner may query a shared service/);
   assert.match(body, /Report work beyond your assigned capability to the main agent/);
   if (role.name !== 'hydra-researcher') {
     assert.match(body, /Do not mutate git state or contact live services without user authorization/);
@@ -275,7 +290,8 @@ try {
   assert.deepStrictEqual(installedPayload, snapshot(source), 'installed payload matches generated roles');
   assert.deepStrictEqual(manifest.files, Object.keys(installedPayload).sort(), 'all payload files are owned');
   const utilities = ['references/hydra-commands.md', 'references/hydra-measurements.md', 'references/hydra-quality.md',
-    'references/hydra-modes.md', 'references/hydra-continuity.md', 'scripts/hydra-control.js', 'scripts/hydra-usage.js'];
+    'references/hydra-modes.md', 'references/hydra-continuity.md', 'references/hydra-services.md',
+    'scripts/hydra-control.js', 'scripts/hydra-usage.js'];
   for (const file of utilities) fs.unlinkSync(path.join(installedSkill, file));
   fs.writeFileSync(path.join(installedSkill, MANIFEST), JSON.stringify({
     ...manifest, files: manifest.files.filter((file) => !utilities.includes(file)),
@@ -295,6 +311,12 @@ try {
   }));
   install(cfg);
   assert.deepStrictEqual(snapshot(cfg), initial, 'upgrade from 20-file payload owns both mode and continuity guides');
+  fs.unlinkSync(path.join(installedSkill, 'references', 'hydra-services.md'));
+  fs.writeFileSync(path.join(installedSkill, MANIFEST), JSON.stringify({
+    ...manifest, files: manifest.files.filter((file) => file !== 'references/hydra-services.md'),
+  }));
+  install(cfg);
+  assert.deepStrictEqual(snapshot(cfg), initial, 'upgrade from 22-file payload adds service coordination guide');
   const installedControl = spawnSync(process.execPath,
     [path.join(installedSkill, 'scripts', 'hydra-control.js'), 'status'], { encoding: 'utf8' });
   assert.strictEqual(installedControl.status, 0, installedControl.stderr);
@@ -317,6 +339,9 @@ try {
     assert.strictEqual(selected.mainModel, 'preserve-selection');
     assert.strictEqual(selected.qualityFloor, 'required-checks-and-serious-findings-block');
     assert.strictEqual(selected.contextContinuity, 'session-ledger-and-checkpoints');
+    assert.strictEqual(selected.servicePolicy.maxConcurrentRequests, 1);
+    assert.strictEqual(selected.servicePolicy.maxAttemptsPerRequest, 3);
+    assert.strictEqual(selected.servicePolicy.elapsedBudgetSeconds, 300);
   }
   assert.strictEqual(installedMode([]).mode, 'balanced', 'mode inspection never persists a prior choice');
   const expanded = installedMode(['balanced', '--expanded']);
@@ -326,6 +351,13 @@ try {
   assert.strictEqual(requested.limits.maxConcurrentAgents, 100);
   assert.strictEqual(requested.limits.maxTotalDispatches, 1000);
   assert.strictEqual(requested.enforcement, 'instruction-guided-host-limits-apply');
+  assert.strictEqual(requested.servicePolicy.maxConcurrentRequests, 1, 'agent fan-out does not expand service quotas');
+  const pendingService = spawnSync(process.execPath, [
+    path.join(installedSkill, 'scripts', 'hydra-control.js'), 'service-plan', 'pending', 'read', '1', '1', '1800',
+  ], { encoding: 'utf8' });
+  assert.strictEqual(pendingService.status, 0, pendingService.stderr);
+  assert.strictEqual(JSON.parse(pendingService.stdout).mayRetry, false, 'a long-running native call is not replayed');
+  assert.strictEqual(JSON.parse(pendingService.stdout).transportControlled, false, 'no fake cancellation/timeout');
   assert.deepStrictEqual(snapshot(cfg), initial, 'mode resolution writes no state or host settings');
   const installedUsage = spawnSync(process.execPath,
     [path.join(installedSkill, 'scripts', 'hydra-usage.js'), 'template'], { encoding: 'utf8' });

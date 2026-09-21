@@ -5,6 +5,20 @@ All notable changes to the Hydra framework will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Service-aware Copilot coordination**: automatic ready-task decomposition,
+  one fetch owner per shared quota, deduplicated/batched reads, progress and
+  coverage reporting, and a service budget independent of worker count.
+- **Local retry adviser**: bounded read retries and elapsed budgets honoring
+  `Retry-After`; pending calls and unresolved mutations are never replayed.
+  This is instruction/advice-level coordination, not MCP interception,
+  cancellation or a live-service performance guarantee.
+- **Copilot parity matrix** distinguishing the orchestration toolkit from its
+  host harness and documenting native/manual equivalents and remaining
+  hook, memory and automatic-reporting requirements.
+
 ## [2.5.2] - 2026-09-18
 
 ### Fixed

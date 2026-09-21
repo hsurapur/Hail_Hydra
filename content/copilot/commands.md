@@ -26,6 +26,13 @@ Duplicate mode/limit flags, missing values or unsupported modes are errors befor
 The helper resolves policy only — it never starts agents, persists the mode or changes models.
 Follow [context continuity](hydra-continuity.md) in every mode.
 
+## Shared-service adviser
+
+Remote work automatically follows [shared-service coordination](hydra-services.md).
+The helper's `service-policy` and `service-plan` commands inspect conservative
+limits and retry/wait advice. They are not new skill flags, MCP timeouts or
+automatic transport controls; do not pass incident contents to them.
+
 ## Help and installation status
 
 `/hail-hydra --help`

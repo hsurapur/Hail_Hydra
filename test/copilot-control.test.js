@@ -30,6 +30,7 @@ const UTILITY_GUIDE_FILES = [
   'hydra-measurements.md',
   'hydra-modes.md',
   'hydra-quality.md',
+  'hydra-services.md',
 ];
 const SKILL_TEXT = '---\nname: hail-hydra\n---\n';
 const SCRATCH = path.join(ROOT, 'test', `.tmp-copilot-control-${process.pid}-${Date.now()}`);
@@ -157,7 +158,7 @@ async function main() {
 
   const help = control.getHelp();
   assert.strictEqual(help.command, 'help');
-  assert.deepStrictEqual(help.supportedHelperCommands, ['help', 'status', 'mode', 'map', 'check-update', 'report', 'notify']);
+  assert.deepStrictEqual(help.supportedHelperCommands, ['help', 'status', 'mode', 'map', 'check-update', 'report', 'notify', 'service-policy', 'service-plan']);
   assert.strictEqual(help.flags.find((item) => item.flag === '--notify').usage, '--notify <goal>');
   assert.strictEqual(help.flags.find((item) => item.flag === '--update').helperCommand, 'check-update');
   const modeHelp = help.flags.find((item) => item.flag === '--mode');
@@ -176,6 +177,24 @@ async function main() {
   assert.match(help.notes.join('\n'), /quality, security, correctness, and permission checks/i);
   assert.match(help.notes.join('\n'), /do not guarantee host capacity/i);
   assert.match(help.notes.join('\n'), /beyond documented balanced expansion, complexity alone does not raise ceilings or promote modes/i);
+  assert.match(help.notes.join('\n'), /cannot time out or cancel an already-pending MCP request/i);
+  assert.strictEqual(help.flags.find((item) => item.flag === '--service-policy'), undefined);
+
+  const servicePolicy = {
+    maxConcurrentRequests: 1,
+    maxAttemptsPerRequest: 3,
+    maxRequestsPerBranch: 12,
+    elapsedBudgetSeconds: 300,
+    slowBranchWarningSeconds: 60,
+    baseRetrySeconds: 5,
+    maxBackoffSeconds: 60,
+    jitterSeconds: 2,
+    enforcement: 'advisory-no-transport-control',
+  };
+  const mutableServicePolicy = control.getServicePolicy();
+  assert.deepStrictEqual(mutableServicePolicy, servicePolicy);
+  mutableServicePolicy.maxConcurrentRequests = 999;
+  assert.deepStrictEqual(control.getServicePolicy(), servicePolicy);
 
   const expectedPolicies = {
     economy: {
@@ -211,6 +230,7 @@ async function main() {
       qualityFloor: 'required-checks-and-serious-findings-block',
       contextContinuity: 'session-ledger-and-checkpoints',
       enforcement: 'instruction-guided-host-limits-apply',
+      servicePolicy,
       ...expectedPolicies[mode],
     };
   }
@@ -224,11 +244,13 @@ async function main() {
       limits: { maxConcurrentAgents: 100, maxTotalDispatches: 1000, maxImprovementRounds: 2 },
       overridesApplied: true,
     }, 'user-requested ceilings do not promote modes or guarantee host capacity');
+    assert.strictEqual(overridden.servicePolicy.maxConcurrentRequests, 1);
     const repeated = control.resolveMode(name);
     assert.notStrictEqual(repeated, resolved);
     assert.notStrictEqual(repeated.limits, resolved.limits);
     resolved.limits.maxConcurrentAgents = 999;
     resolved.limits.maxImprovementRounds = 999;
+    resolved.servicePolicy.maxConcurrentRequests = 999;
     resolved.workerPolicy = 'changed';
     resolved.mainModel = 'changed';
     assert.deepStrictEqual(control.resolveMode(name), expectedMode(name));
@@ -318,6 +340,18 @@ async function main() {
   assert.deepStrictEqual(control.parseArgs(['check-update']), { command: 'check-update' });
   assert.deepStrictEqual(control.parseArgs(['report', 'feature']), { command: 'report', kind: 'feature' });
   assert.deepStrictEqual(control.parseArgs(['notify', 'success']), { command: 'notify', goal: 'success' });
+  assert.deepStrictEqual(control.parseArgs(['service-policy']), { command: 'service-policy' });
+  assert.deepStrictEqual(control.parseArgs(['service-plan', 'transient', 'read', '2', '3', '0.5', '1.5']), {
+    command: 'service-plan',
+    state: {
+      status: 'transient',
+      operation: 'read',
+      attempts: 2,
+      requests: 3,
+      elapsedSeconds: 0.5,
+      retryAfterSeconds: 1.5,
+    },
+  });
   assert.deepStrictEqual(control.parseArgs(['mode']), { command: 'mode', mode: 'balanced', options: {} });
   assert.deepStrictEqual(control.parseArgs(['--mode', 'turbo']), { command: 'mode', mode: 'turbo', options: {} });
   assert.deepStrictEqual(control.parseArgs(['mode', '--expanded']), {
@@ -338,23 +372,136 @@ async function main() {
     }
   }
 
+  function serviceStep(overrides) {
+    return control.planServiceStep({
+      status: 'throttled',
+      operation: 'read',
+      attempts: 1,
+      requests: 1,
+      elapsedSeconds: 0,
+      ...overrides,
+    });
+  }
+
+  for (const [elapsedSeconds, action, reason] of [
+    [59, 'wait', 'request_pending'],
+    [60, 'report_slow', 'slow_branch_in_flight'],
+    [299, 'report_slow', 'slow_branch_in_flight'],
+    [300, 'blocked_in_flight', 'deadline_exhausted'],
+    [1800, 'blocked_in_flight', 'deadline_exhausted'],
+  ]) {
+    const result = serviceStep({ status: 'pending', elapsedSeconds });
+    assert.strictEqual(result.action, action);
+    assert.strictEqual(result.reason, reason);
+    assert.strictEqual(result.mayRetry, false);
+    assert.strictEqual(result.retryDelayRangeSeconds, null);
+    assert.strictEqual(result.transportControlled, false);
+    assert.strictEqual(result.remainingSeconds, Math.max(0, 300 - elapsedSeconds));
+    assert.deepStrictEqual(result.policy, servicePolicy);
+  }
+
+  const serverThrottle = serviceStep({ retryAfterSeconds: 60 });
+  assert.deepStrictEqual(serverThrottle.retryDelayRangeSeconds, { min: 60, max: 62 });
+  assert.strictEqual(serverThrottle.action, 'retry_after');
+  assert.strictEqual(serverThrottle.mayRetry, true);
+  assert.deepStrictEqual(serviceStep().retryDelayRangeSeconds, { min: 5, max: 7 });
+  assert.deepStrictEqual(serviceStep({ attempts: 2, requests: 2 }).retryDelayRangeSeconds, { min: 10, max: 12 });
+  assert.deepStrictEqual(
+    serviceStep({ retryAfterSeconds: null }),
+    serviceStep({ retryAfterSeconds: 0 }),
+    'missing Retry-After and zero Retry-After use the same backoff',
+  );
+  for (const result of [
+    serviceStep({ retryAfterSeconds: 301 }),
+    serviceStep({ attempts: 3, requests: 3 }),
+    serviceStep({ attempts: 2, requests: 12 }),
+    serviceStep({ elapsedSeconds: 295 }),
+    serviceStep({ status: 'permanent' }),
+    serviceStep({ operation: 'write', retryAfterSeconds: 60 }),
+    serviceStep({ status: 'transient', operation: 'write' }),
+  ]) {
+    assert.strictEqual(result.action, 'stop');
+    assert.strictEqual(result.mayRetry, false);
+    assert.strictEqual(result.retryDelayRangeSeconds, null);
+  }
+  assert.strictEqual(serviceStep({ retryAfterSeconds: 301 }).reason, 'deadline_before_retry');
+  assert.strictEqual(serviceStep({ attempts: 3, requests: 3 }).reason, 'max_attempts_exhausted');
+  assert.strictEqual(serviceStep({ attempts: 2, requests: 12 }).reason, 'request_budget_exhausted');
+  assert.strictEqual(serviceStep({ elapsedSeconds: 295 }).reason, 'deadline_before_retry');
+  assert.strictEqual(serviceStep({ status: 'permanent' }).reason, 'permanent_failure');
+  assert.strictEqual(serviceStep({ operation: 'write' }).reason, 'manual_reconcile_required');
+  assert.throws(() => control.planServiceStep({}), control.HydraControlError);
+  for (const invalid of [
+    { status: 'unknown' },
+    { operation: 'delete' },
+    { attempts: NaN },
+    { attempts: Infinity },
+    { attempts: 1.5 },
+    { requests: NaN },
+    { requests: Infinity },
+    { requests: 1.5 },
+    { requests: 0 },
+    { elapsedSeconds: NaN },
+    { elapsedSeconds: Infinity },
+    { elapsedSeconds: -1 },
+    { retryAfterSeconds: Infinity },
+    { retryAfterSeconds: -1 },
+    { unexpected: 'SERVICE_SECRET' },
+  ]) {
+    assert.throws(
+      () => serviceStep(invalid),
+      (err) => err instanceof control.HydraControlError && !err.message.includes('SERVICE_SECRET'),
+    );
+  }
+  for (const args of [
+    ['service-policy', 'SERVICE_SECRET'],
+    ['service-plan'],
+    ['service-plan', 'transient', 'read', '1', '1', '0', '0', 'SERVICE_SECRET'],
+    ['service-plan', 'SERVICE_SECRET', 'read', '1', '1', '0'],
+    ['service-plan', 'transient', 'read', 'NaN', '1', '0'],
+    ['service-plan', 'transient', 'read', '1.5', '2', '0'],
+    ['service-plan', 'transient', 'read', '1', 'Infinity', '0'],
+    ['service-plan', 'transient', 'read', '1', '1', '1e2'],
+    ['service-plan', 'transient', 'read', '1', '1', '-0.5'],
+    ['service-plan', 'transient', 'read', '1\n', '1', '0'],
+    ['service-plan', 'transient', 'read', '1', '1', '0.5\n'],
+  ]) {
+    assert.throws(() => control.parseArgs(args), control.HydraControlError);
+  }
+
   const installedRoot = createInstalledRoot();
   const status = control.inspectStatus(installedRoot);
   assert.deepStrictEqual(status, {
     command: 'status',
     installed: true,
     version: '2.5.2',
-    ownedFileCount: 22,
+    ownedFileCount: 23,
   });
 
   const installedStatus = runCli(path.join(installedRoot, 'scripts', 'hydra-control.js'), ['status'], 0);
   const installedStatusJson = JSON.parse(installedStatus.stdout);
   assert.strictEqual(installedStatusJson.version, '2.5.2');
   assert.strictEqual(installedStatusJson.installed, true);
-  assert.strictEqual(installedStatusJson.ownedFileCount, 22);
+  assert.strictEqual(installedStatusJson.ownedFileCount, 23);
 
   const installedHelp = runCli(path.join(installedRoot, 'scripts', 'hydra-control.js'), ['help'], 0);
   assert.strictEqual(JSON.parse(installedHelp.stdout).command, 'help');
+  const installedServicePolicy = runCli(path.join(installedRoot, 'scripts', 'hydra-control.js'), ['service-policy'], 0);
+  assert.deepStrictEqual(JSON.parse(installedServicePolicy.stdout), { command: 'service-policy', ...servicePolicy });
+  const installedServicePlan = runCli(
+    path.join(installedRoot, 'scripts', 'hydra-control.js'),
+    ['service-plan', 'transient', 'read', '1', '1', '0'],
+    0,
+  );
+  assert.deepStrictEqual(JSON.parse(installedServicePlan.stdout), serviceStep({ status: 'transient' }));
+  const invalidInstalledServicePlan = runCli(
+    path.join(installedRoot, 'scripts', 'hydra-control.js'),
+    ['service-plan', 'transient', 'read', '1', '1', '0', '0', 'SERVICE_SECRET'],
+    1,
+  );
+  assert.strictEqual(invalidInstalledServicePlan.stdout, '');
+  assert.ok(invalidInstalledServicePlan.stderr.trim());
+  assert.ok(!invalidInstalledServicePlan.stderr.includes('SERVICE_SECRET'));
 
   for (const script of [CONTROL_PATH, path.join(installedRoot, 'scripts', 'hydra-control.js')]) {
     for (const name of ['turbo', 'economy', 'balanced']) {
@@ -441,10 +588,12 @@ async function main() {
         ['--mode', 'turbo'],
         ['mode', 'economy'],
         ['mode', '--expanded', '--max-agents', '3', '--max-dispatches', '5'],
+        ['service-policy'],
+        ['service-plan', 'transient', 'read', '1', '1', '0'],
       ]) {
         const capture = makeCaptureIo();
         assert.strictEqual(await control.main(args, capture.io, { root: path.join(SCRATCH, 'not-installed') }), 0);
-        assert.ok(['help', 'mode'].includes(JSON.parse(capture.stdout()).command));
+        assert.ok(['help', 'mode', 'service-policy', 'service-plan'].includes(JSON.parse(capture.stdout()).command));
         assert.strictEqual(capture.stderr(), '');
       }
     } finally {

@@ -143,6 +143,12 @@ All flags: `--agent=<list>` (`claude,gemini,codex,copilot`) or the aliases `--cl
 
 ### GitHub Copilot CLI (opt-in)
 
+Hydra is an **orchestration toolkit on top of the Copilot harness**, not a
+replacement harness or model. Copilot provides sessions, tools, permissions
+and subagent execution; Hydra supplies role prompts, task/mode policies and
+local utilities. Those policies guide the agent, not a separate enforcement
+runtime. Your selected main model remains responsible for the result.
+
 Requires a Copilot CLI version that supports skills and explicit invocation.
 
 ```bash
@@ -172,6 +178,23 @@ Then, **inside the same Copilot session**:
 
 **Modes:** `/hail-hydra --mode <turbo|balanced|economy> <goal>` (default `balanced`); Turbo puts speed first and costs more. Ceilings are instruction-level heuristics bounded by your Copilot plan's concurrency, not a scheduler guarantee.
 
+**Slow or throttled MCPs:** Hydra decomposes large goals without another prompt,
+but uses one fetch owner per shared service quota rather than sending every
+worker to it. Deduplicate reads, use supported bulk/filter/page operations,
+reuse sufficiently fresh results, and keep independent work progressing.
+Service limits stay separate from agent limits, even in Turbo: default one
+in-flight request, three attempts per read, twelve requests and a five-minute
+elapsed budget per retrieval branch. These are conservative planning defaults,
+not service SLAs. Respect `Retry-After`, bound retries and report partial results
+or blocked data rather than endlessly retrying. Never replay an unresolved write.
+
+The local `hydra-control.js service-policy` / `service-plan` adviser calculates
+wait/retry decisions from explicit counters; it does not intercept MCP traffic,
+hold cross-agent locks or enforce a timeout. A synchronous stuck tool may prevent
+progress reporting until the host returns control. Hydra cannot speed up the
+service or cancel unsupported calls; it must not issue duplicate calls while
+one is still pending. No live-service benchmark or throttling fix is claimed.
+
 **Quality:** substantial changes get an automatic in-task review via native `code-review`/`security-review` before completion is reported.
 
 **Continuity:** treat a `/model` switch like a compaction boundary — write the session ledger before an anticipated switch, read it back before the next dispatch or decision.
@@ -179,6 +202,28 @@ Then, **inside the same Copilot session**:
 **Measuring savings:** compare `/usage` before/after a normal run against a `/hail-hydra` run, then `/hail-hydra --compare`; not yet benchmarked on Copilot specifically.
 
 **Hooks are deferred** until upstream hook reliability bugs are fixed (copilot-cli issues [#4520](https://github.com/github/copilot-cli/issues/4520), [#1730](https://github.com/github/copilot-cli/issues/1730), [#2201](https://github.com/github/copilot-cli/issues/2201), [#4001](https://github.com/github/copilot-cli/issues/4001), [#4549](https://github.com/github/copilot-cli/issues/4549)); quality gates and `--notify` run in-task/manually for now.
+
+#### Copilot feature parity
+
+The general feature list below spans several hosts; it is not a claim that
+every feature runs unchanged on Copilot.
+
+| Feature | Copilot implementation |
+|---|---|
+| Specialists, parallel work, mode/model routing | Native subagents guided by the skill; task ceilings are not scheduler guarantees. |
+| Review, environment checks and dependency maps | In-task policies and explicit utilities, not always-on edit hooks. |
+| Persistent per-agent memory | Not ported. Native memory and session checkpoints are used under their own scope/privacy rules. |
+| Automatic token/cost collection and live savings display | Not ported. Native `/usage` plus explicitly supplied run receipts; no automatic measured saving or copied provider-price calculation. |
+| Hook-driven completion sound and update notification | Deferred. Explicit `--notify` and `--update` remain available. |
+| Shared-service backpressure | Fetch-owner instructions and a local retry adviser; no transport timeout, cross-session lock or MCP cancellation. |
+
+Further parity needs host-specific adapters, not copying another CLI's hooks:
+verify event coverage and task activation boundaries before installing hooks;
+use explicit opt-in and native scoping for durable memory; validate supported
+usage schemas, worker attribution and billing units before automatic reporting.
+Every adapter must preserve user settings, ordinary unprefixed behavior and
+ownership-aware uninstall. These are remaining requirements, not features
+implemented by the service-coordination change.
 
 > **`.claude/` collision:** Copilot also loads a project's `.claude/skills/` and `.claude/agents/`. A repo-local Claude Code Hydra install (`.claude/skills/hydra/`, auto-activating, and `.claude/agents/hydra-*.md`) will also be visible inside Copilot — install Claude Hydra globally, or remove the local copy, in repos where you use `/hail-hydra`.
 

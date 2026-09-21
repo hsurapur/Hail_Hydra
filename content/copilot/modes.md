@@ -33,6 +33,9 @@ Use the installed helper without passing task text to a shell:
 `mode` alone returns Balanced. For justified expanded Balanced work, append
 `--expanded` to the helper call. The helper prints an inspectable policy and
 writes no state; it neither starts workers nor changes the active CLI mode.
+Its `servicePolicy` applies unchanged across all modes and worker-limit
+overrides. Follow [shared-service coordination](hydra-services.md); Turbo
+increases useful agent work, not the load on a throttled MCP.
 
 The user may explicitly override ceilings with leading task modifiers
 `--max-agents N` and `--max-dispatches N` — requested instruction-level

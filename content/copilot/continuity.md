@@ -10,6 +10,8 @@ For substantial work, maintain a compact ledger in the host's persistent session
 - Goal, acceptance criteria and constraints, including out-of-scope actions.
 - Mode, ceilings, dispatches spent and improvement round.
 - Known main/worker models, active worker IDs, dependencies and file ownership.
+- Shared-service fetch owners, in-flight request keys, attempt/page counts,
+  cooldown deadlines and missing coverage; never reset them on resume.
 - Accepted/rejected design choices and current UI/API/data contracts.
 - Work completed, review evidence, unresolved findings and next actions.
 - Relevant repository/branch/commit and dirty-file context.

@@ -85,6 +85,7 @@ function transformRole(text, fileName) {
       ['Do not directly edit files. Any shell mutation must be explicitly authorized by the task.']),
     'These are role instructions, not extra permissions or a sandbox.',
     'Follow the parent /hail-hydra invocation scope, budget and permissions.',
+    'Only the assigned fetch owner may query a shared service; reuse its results and quota budget.',
     'Report work beyond your assigned capability to the main agent; do not guess or approve release.',
     'Do not delegate again, start another CLI, or create persistent memories.',
     'Use the host-native shell and tools; never assume Bash on Windows.',
@@ -129,7 +130,7 @@ function emit() {
   }
   write(path.join(out, 'references', 'roles.json'),
     JSON.stringify(definitions.map(({ role }) => role), null, 2) + '\n');
-  for (const name of ['commands', 'measurements', 'quality', 'modes', 'continuity']) {
+  for (const name of ['commands', 'measurements', 'quality', 'modes', 'continuity', 'services']) {
     write(path.join(out, 'references', `hydra-${name}.md`),
       fs.readFileSync(path.join(CONTENT, 'copilot', `${name}.md`), 'utf8'));
   }

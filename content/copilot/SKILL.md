@@ -36,6 +36,7 @@ context slice, not the full conversation.
 
 Derive acceptance criteria and select specialists from the goal and project; do not require agent names, a swarm flag or repeated "continue" prompts.
 Keep a compact task ledger with dependencies, file ownership, decisions and evidence in the conversation/task tracker, not new repository planning files.
+Automatically split substantial goals into ready units; prioritize dependencies, not fan-out.
 For substantial work, follow [context continuity](references/hydra-continuity.md): save session-local checkpoints and restore verified decisions after compaction.
 Subagents have separate contexts; pass relevant main-conversation facts.
 
@@ -61,6 +62,9 @@ At the limit, work directly or report a blocker.
 The selected main model owns reasoning, design, complex debugging and final acceptance; never reduce it to a dispatcher or rubber-stamp worker reports.
 
 ## Dispatch
+
+Remote work must use [service coordination](references/hydra-services.md):
+one fetch owner; more workers must not multiply throttled requests.
 
 Roles are private prompts, not registered agents; pass task, paths, criteria, write scope, context, output contract, budget and permissions.
 
